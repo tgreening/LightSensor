@@ -5,25 +5,12 @@
   Connect LED from pin 11 through a resistor to ground
   For more information see http://learn.adafruit.com/photocells */
 #include <DS1307RTC.h>   // https://github.com/PaulStoffregen/DS1307RTC
-#include <Timezone.h>    // https://github.com/JChristensen/Timezone
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
 #include <FS.h>                   //this needs to be first, or it all crashes and burns...
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 #include <ArduinoOTA.h>
 #include <Wire.h>
 #include <ESP8266mDNS.h>
-
-// US Eastern Time Zone (New York, Detroit)
-TimeChangeRule myDST = {"EDT", Second, Sun, Mar, 2, -240};    //Daylight time = UTC - 4 hours
-TimeChangeRule mySTD = {"EST", First, Sun, Nov, 2, -300};     //Standard time = UTC - 5 hours
-Timezone myTZ(myDST, mySTD);
-
-// If TimeChangeRules are already stored in EEPROM, comment out the three
-// lines above and uncomment the line below.
-//Timezone myTZ(100);       //assumes rules stored at EEPROM address 100
-
-TimeChangeRule *tcr;        //pointer to the time change rule, use to get TZ abbrev
-time_t local, utc;
 
 const unsigned long READ_MILLIS = 60000UL;
 const unsigned int POST_COUNT = 15;
@@ -35,7 +22,7 @@ int photocellReading;     // the analog reading from the sensor divider
 int lowLightCount = 0;
 int switchStatus = 0;
 char apiKey[16];
-
+time_t local;
 ESP8266WebServer httpServer(80);
 
 //flag for saving data
@@ -233,27 +220,3 @@ void postToThingSpeak(String data) {
     client.print(data);
   }
 }
-
-time_t time_when_compiled()
-{
-  char const *datestr = __DATE__;
-  char const *timestr = __TIME__;
-
-  char s_month[5];
-  int year;
-  tmElements_t t;
-  static const char month_names[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-
-  sscanf(datestr, "%s %hhd %d", s_month, &t.Day, &year);
-  sscanf(timestr, "%2hhd %*c %2hhd %*c %2hhd", &t.Hour, &t.Minute, &t.Second);
-
-  // Find where is s_month in month_names. Deduce month value.
-  t.Month = (strstr(month_names, s_month) - month_names) / 3 + 1;
-
-  // year can be given as '2010' or '10'. It is converted to years since 1970
-  if (year > 99) t.Year = year - 1970;
-  else t.Year = year + 30;
-
-  return makeTime(t);
-}
-
