@@ -22,6 +22,7 @@ int photocellReading;     // the analog reading from the sensor divider
 int lowLightCount = 0;
 int switchStatus = 0;
 char apiKey[16];
+bool adjustmentMade = false;
 time_t local;
 ESP8266WebServer httpServer(80);
 
@@ -49,14 +50,16 @@ void setup(void) {
     String html = "<html><body><b>Light Switch</b><br>";
     html += "Current Reading: ";
     html += photocellReading;
-    html += "<br>Last Reading: ";
-    html += lastReadingTime;
-    html += "<br>Last Post Time: ";
+    html += "<br>Last Post Count: ";
     html += postCount;
     html += "<br>Switch Status: ";
     html += switchStatus;
     html += "<br>Low Light Count: ";
     html += lowLightCount;
+    html += "<br>Time: ";
+    html += hour(now());
+    html += ":";
+    html += minute(now());
     html += "<br></body></html>";
     Serial.println("Done serving up HTML...");
     httpServer.send(200, "text/html", html);
@@ -176,6 +179,7 @@ void loop(void) {
     Serial.print("Analog reading = ");
     Serial.println(photocellReading);     // the raw analog reading
     postCount++;
+    checkDaylightSavings();
     if (hour(local) > 17 && hour(local) < 23 && photocellReading < 200  && switchStatus == 0) {
       lowLightCount++;
       if ( lowLightCount > 2 ) {
@@ -220,3 +224,22 @@ void postToThingSpeak(String data) {
     client.print(data);
   }
 }
+
+void checkDaylightSavings() {
+  int hourAdjustment = 0;
+  if (weekday() == 1) {
+    if (month() == 3 && day() >= 8  && day() <= 14 && hour() == 2) {
+      hourAdjustment = 1;
+    }
+    if (month() == 11 && day() >= 1  && day() <= 7 && hour() == 2) {
+      hourAdjustment = -1;
+    }
+    if (!adjustmentMade) {
+      setTime(hour() + hourAdjustment, minute(), second(), day(), month(), year());
+      adjustmentMade = true;
+    }
+  } else {
+    adjustmentMade = false;
+  }
+}
+
