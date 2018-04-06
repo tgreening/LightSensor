@@ -173,20 +173,19 @@ void setup(void) {
 
 void loop(void) {
   if ((long) (millis() - lastReadingTime) >= 0) {
-    local = now();
     lastReadingTime += READ_MILLIS;
     photocellReading = analogRead(photocellPin);
     Serial.print("Analog reading = ");
     Serial.println(photocellReading);     // the raw analog reading
     postCount++;
     checkDaylightSavings();
-    if (hour(local) > 17 && hour(local) < 23 && photocellReading < 200  && switchStatus == 0) {
+    if (hour() > 17 && (hour() <= 22 && minute() <= 15) && photocellReading < 200  && switchStatus == 0) {
       lowLightCount++;
       if ( lowLightCount > 2 ) {
         switchStatus = 1;
       }
     }
-    if (hour(local) > 22 && minute(local) > 15 ) {
+    if (hour() > 22 && minute() > 15 ) {
       switchStatus = 0;
       lowLightCount = 0;
     }
