@@ -179,17 +179,18 @@ void loop(void) {
     Serial.println(photocellReading);     // the raw analog reading
     postCount++;
     checkDaylightSavings();
-    if (hour() > 17 && (hour() <= 22 && minute() <= 15) && photocellReading < 200  && switchStatus == 0) {
+    if (hour() > 17 && hour() < 23 && photocellReading < 300  && switchStatus == 0) {
       lowLightCount++;
       if ( lowLightCount > 2 ) {
         switchStatus = 1;
       }
     }
-    if (hour() > 22 && minute() > 15 ) {
-      switchStatus = 0;
-      lowLightCount = 0;
-    }
   }
+  if (hour() >= 22 && minute() > 15 ) {
+    switchStatus = 0;
+    lowLightCount = 0;
+  }
+
   if (postCount >= 30) {
     Serial.println("Updating checks...");
     postReading(photocellReading, switchStatus);
