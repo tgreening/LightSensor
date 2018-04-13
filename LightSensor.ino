@@ -15,7 +15,7 @@
 const unsigned long READ_MILLIS = 60000UL;
 const unsigned int POST_COUNT = 15;
 const char* thingSpeakserver = "api.thingspeak.com";
-const char* host = "LightSensor";
+const char* host = "lightsensor";
 
 int photocellPin = A0;     // the cell and 10K pulldown are connected to a0
 int photocellReading;     // the analog reading from the sensor divider
@@ -40,6 +40,7 @@ void setup(void) {
   // We'll send debugging information via the Serial monitor
   Serial.begin(115200);
   WiFiManager wifiManager;
+  //wifiManager.resetSettings();
   //read configuration from FS json
   Serial.println("mounting FS...");
   httpServer.on("/", HTTP_GET, []() {
@@ -60,6 +61,8 @@ void setup(void) {
     html += hour(now());
     html += ":";
     html += minute(now());
+    html += "<br>API Key: ";
+    html += String(apiKey);
     html += "<br></body></html>";
     Serial.println("Done serving up HTML...");
     httpServer.send(200, "text/html", html);
@@ -97,8 +100,9 @@ void setup(void) {
 
   //add all your parameters here
   wifiManager.addParameter(&custom_thingspeak_api_key);
+  WiFi.hostname(String(host));
 
-  if (!wifiManager.autoConnect("LightSwitchAP", "brook13s")) {
+  if (!wifiManager.autoConnect(host)) {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
@@ -108,7 +112,6 @@ void setup(void) {
 
   //if you get here you have connected to the WiFi
   Serial.println("connected...yeey :)");
-  WiFi.hostname(host);
   if (!MDNS.begin(host)) {
     Serial.println("Error setting up MDNS responder!");
   }
@@ -135,7 +138,7 @@ void setup(void) {
   }
   Serial.println("local ip");
   Serial.println(WiFi.localIP());
-  ArduinoOTA.setHostname("LightSwitch");
+  ArduinoOTA.setHostname(host);
   ArduinoOTA.onStart([]() {
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH)
