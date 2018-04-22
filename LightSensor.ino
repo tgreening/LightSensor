@@ -4,26 +4,34 @@
   Then connect one end of a 10K resistor from Analog 0 to ground
   Connect LED from pin 11 through a resistor to ground
   For more information see http://learn.adafruit.com/photocells */
-#include <DS1307RTC.h>   // https://github.com/PaulStoffregen/DS1307RTC
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
 #include <FS.h>                   //this needs to be first, or it all crashes and burns...
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 #include <ArduinoOTA.h>
 #include <Wire.h>
 #include <ESP8266mDNS.h>
+#include <TimeLib.h>
 
 const unsigned long READ_MILLIS = 60000UL;
 const unsigned int POST_COUNT = 15;
 const char* thingSpeakserver = "api.thingspeak.com";
 const char* host = "lightsensor";
+const char* ntpServerName = "time.nist.gov";
+const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
+const String timeZone = "America/Detroit";
+const String timezoneKey = "AY0H14VE80X2";
+const int RELAY_PIN = D5;
+const int SYNC_INTERVAL = 3600; //every hour sync the time
 
+byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
 int photocellPin = A0;     // the cell and 10K pulldown are connected to a0
 int photocellReading;     // the analog reading from the sensor divider
 int lowLightCount = 0;
 int switchStatus = 0;
-char apiKey[16];
+char thingSpeakAPIKey[16];
+char timeZoneAPIKey[16];
 bool adjustmentMade = false;
-time_t local;
+unsigned long start;
 ESP8266WebServer httpServer(80);
 
 //flag for saving data
@@ -39,6 +47,8 @@ void saveConfigCallback () {
 void setup(void) {
   // We'll send debugging information via the Serial monitor
   Serial.begin(115200);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);
   WiFiManager wifiManager;
   //wifiManager.resetSettings();
   //read configuration from FS json
@@ -58,11 +68,11 @@ void setup(void) {
     html += "<br>Low Light Count: ";
     html += lowLightCount;
     html += "<br>Time: ";
-    html += hour(now());
-    html += ":";
-    html += minute(now());
+    html += String(month()) + "/" + String(day()) + "/" + String(year()) + " " + String(hour()) + ":" + String(minute());
     html += "<br>API Key: ";
-    html += String(apiKey);
+    html += String(thingSpeakAPIKey);
+    html += "<br>Uptime: ";
+    html += uptimeString();
     html += "<br></body></html>";
     Serial.println("Done serving up HTML...");
     httpServer.send(200, "text/html", html);
@@ -86,7 +96,8 @@ void setup(void) {
         json.printTo(Serial);
         if (json.success()) {
           Serial.println("\nparsed json");
-          strcpy(apiKey, json["ThingSpeakWriteKey"]);
+          strlcpy(thingSpeakAPIKey, json["ThingSpeakWriteKey"] | "12345", sizeof(thingSpeakAPIKey));
+          strlcpy(timeZoneAPIKey, json["TimezoneAPIKey"] | "ABCD", sizeof(timeZoneAPIKey));
         } else {
           Serial.println("failed to load json config");
         }
@@ -95,14 +106,18 @@ void setup(void) {
   } else {
     Serial.println("failed to mount FS");
   }
-  WiFiManagerParameter custom_thingspeak_api_key("key", "API key", apiKey, 40);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
 
   //add all your parameters here
+  WiFiManagerParameter custom_thingspeak_api_key("thingspeakapikey", "Thingspeak API key", thingSpeakAPIKey, 40);
   wifiManager.addParameter(&custom_thingspeak_api_key);
-  WiFi.hostname(String(host));
 
-  if (!wifiManager.autoConnect(host)) {
+  WiFiManagerParameter custom_timezone_api_key("timezoneapikey", "TimezoneDB API key", timeZoneAPIKey, 40);
+  wifiManager.addParameter(&custom_timezone_api_key);
+
+  WiFi.hostname(String(host));
+  wifiManager.setConfigPortalTimeout(120);
+  if (!wifiManager.startConfigPortal(host)) {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
@@ -117,14 +132,16 @@ void setup(void) {
   }
 
   //read updated parameters
-  strcpy(apiKey, custom_thingspeak_api_key.getValue());
+  strcpy(thingSpeakAPIKey, custom_thingspeak_api_key.getValue());
+  strcpy(timeZoneAPIKey, custom_timezone_api_key.getValue());
 
   //save the custom parameters to FS
   if (shouldSaveConfig) {
     Serial.println("saving config");
     DynamicJsonBuffer jsonBuffer;
     JsonObject& json = jsonBuffer.createObject();
-    json["ThingSpeakWriteKey"] = apiKey;
+    json["ThingSpeakWriteKey"] = thingSpeakAPIKey;
+    json["TimezoneAPIKey"] = timeZoneAPIKey;
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile) {
@@ -164,11 +181,16 @@ void setup(void) {
     else if (error == OTA_END_ERROR) Serial.println("End Failed");
   });
   Wire.begin(D2, D1);
-  setSyncProvider(RTC.get);   // the function to get the time from the RTC
+  setSyncProvider(setTime);
+  setSyncInterval(SYNC_INTERVAL);
+  setTime();
   if (timeStatus() != timeSet)
     Serial.println("Unable to sync with the RTC");
   else
     Serial.println("RTC has set the system time");
+  start = now();
+  Serial.print("Hour: ");
+  Serial.println(hour(now()));
   ArduinoOTA.begin();
   httpServer.begin();
   Serial.println("Ready");
@@ -181,16 +203,17 @@ void loop(void) {
     Serial.print("Analog reading = ");
     Serial.println(photocellReading);     // the raw analog reading
     postCount++;
-    checkDaylightSavings();
-    if (hour() > 17 && hour() < 23 && photocellReading < 300  && switchStatus == 0) {
+    if (hour() > 17 && hour() < 23 && photocellReading < 350  && switchStatus == 0) {
       lowLightCount++;
       if ( lowLightCount > 2 ) {
         switchStatus = 1;
+        digitalWrite(RELAY_PIN, HIGH);
       }
     }
   }
   if (hour() >= 22 && minute() > 15 ) {
     switchStatus = 0;
+    digitalWrite(RELAY_PIN, LOW);
     lowLightCount = 0;
   }
 
@@ -204,7 +227,7 @@ void loop(void) {
 }
 
 void postReading(int reading, int switchStatus) {
-  String data = String(apiKey).substring(0, 16) + "&field1=";
+  String data = String(thingSpeakAPIKey).substring(0, 16) + "&field1=";
   data += reading;
   data += "&field2=";
   data += switchStatus;
@@ -219,7 +242,7 @@ void postToThingSpeak(String data) {
     client.print("POST /update HTTP/1.1\n");
     client.print("Host: api.thingspeak.com\n");
     client.print("Connection: close\n");
-    client.print("X-THINGSPEAKAPIKEY: " + String(apiKey).substring(0, 16) + "\n");
+    client.print("X-THINGSPEAKAPIKEY: " + String(thingSpeakAPIKey).substring(0, 16) + "\n");
     client.print("Content-Type: application/x-www-form-urlencoded\n");
     client.print("Content-Length: ");
     client.print(data.length());
@@ -228,21 +251,77 @@ void postToThingSpeak(String data) {
   }
 }
 
-void checkDaylightSavings() {
-  int hourAdjustment = 0;
-  if (weekday() == 1) {
-    if (month() == 3 && day() >= 8  && day() <= 14 && hour() == 2) {
-      hourAdjustment = 1;
-    }
-    if (month() == 11 && day() >= 1  && day() <= 7 && hour() == 2) {
-      hourAdjustment = -1;
-    }
-    if (!adjustmentMade) {
-      setTime(hour() + hourAdjustment, minute(), second(), day(), month(), year());
-      adjustmentMade = true;
-    }
-  } else {
-    adjustmentMade = false;
-  }
+String uptimeString() {
+  long Day = 0;
+  int Hour = 0;
+  int Minute = 0;
+  int Second = 0;
+  long secsUp = now() - start;
+  Second = secsUp % 60;
+  Minute = (secsUp / 60) % 60;
+  Hour = (secsUp / (60 * 60)) % 24;
+  Day = secsUp / (60 * 60 * 24); //First portion takes care of a rollover [around 50 days]
+  char buff[32];
+  sprintf(buff, "%3d Days %2d:%02d:%02d", Day, Hour, Minute, Second);
+  String retVal = String(buff);
+  Serial.print("Uptime String: ");
+  Serial.println(retVal);
+  return retVal;
 }
 
+
+time_t setTime() {
+  WiFiClient client;
+  if (!client.connect("api.timezonedb.com", 80)) {
+    Serial.println("connection failed");
+    return 0;
+  }
+  //  String URL = "GET /v2/get-time-zone?key=" + timezoneKey + AY0H14VE80X2&format=json&by=zone&zone=" + timeZone
+  client.print("GET /v2/get-time-zone?key=" + timezoneKey + "&format=json&by=zone&zone=");
+  client.print(timeZone);
+  client.print(" HTTP/1.1\r\n");
+  client.print("Host: api.timezonedb.com\r\n");
+  client.print("Connection: close\r\n");
+  client.println();
+  unsigned long timeout = millis();
+  while (client.available() == 0) {
+    if (millis() - timeout > 5000) {
+      Serial.println(">>> Client Timeout !");
+      client.stop();
+      return 0;
+    }
+  }
+
+  // Check HTTP status
+  char status[32] = {0};
+  client.readBytesUntil('\r', status, sizeof(status));
+  if (strcmp(status, "HTTP/1.1 200 OK") != 0) {
+    Serial.print(F("Unexpected response: "));
+    Serial.println(status);
+    return 0;
+  }
+
+  // Skip HTTP headers
+  char endOfHeaders[] = "\r\n\r\n";
+  if (!client.find(endOfHeaders)) {
+    Serial.println(F("Invalid response"));
+    return 0;
+  }
+
+  //skip extra characters
+  if (client.available()) {
+    client.readStringUntil('\r');
+  }
+
+  // Allocate JsonBuffer
+  // Use arduinojson.org/assistant to compute the capacity.
+  DynamicJsonBuffer jsonBuffer;
+  // Parse JSON object
+  JsonObject& root = jsonBuffer.parseObject(client);
+  if (!root.success()) {
+    Serial.println(F("Parsing failed!"));
+    return 0;
+  }
+  return root["timestamp"].as<long>();
+
+}
