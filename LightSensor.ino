@@ -19,7 +19,6 @@ const char* host = "lightsensor";
 const char* ntpServerName = "time.nist.gov";
 const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
 const String timeZone = "America/Detroit";
-const String timezoneKey = "AY0H14VE80X2";
 const int RELAY_PIN = D5;
 const int SYNC_INTERVAL = 3600; //every hour sync the time
 
@@ -211,7 +210,7 @@ void loop(void) {
       }
     }
   }
-  if (hour() >= 22 && minute() > 15 ) {
+  if (hour() >= 22 && minute() > 5 ) {
     switchStatus = 0;
     digitalWrite(RELAY_PIN, LOW);
     lowLightCount = 0;
@@ -277,7 +276,7 @@ time_t setTime() {
     return 0;
   }
   //  String URL = "GET /v2/get-time-zone?key=" + timezoneKey + AY0H14VE80X2&format=json&by=zone&zone=" + timeZone
-  client.print("GET /v2/get-time-zone?key=" + timezoneKey + "&format=json&by=zone&zone=");
+  client.print("GET /v2/get-time-zone?key=" + String(timeZoneAPIKey) + "&format=json&by=zone&zone=");
   client.print(timeZone);
   client.print(" HTTP/1.1\r\n");
   client.print("Host: api.timezonedb.com\r\n");
